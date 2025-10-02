@@ -1,0 +1,16 @@
+[project]
+name = "powerimaginatorserver"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "diffusers>=0.35.1",
+    "fastapi[standard]>=0.117.1",
+    "hf-transfer>=0.1.9",
+    "modal>=1.1.4",
+    "numpy>=2.3.3",
+    "pillow>=11.3.0",
+    "python-multipart>=0.0.20",
+    "torch>=2.8.0",
+    "torchvision>=0.23.0",
+    "transformers>=4.56.2",
+]
