@@ -11,7 +11,7 @@ from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 
 app = FastAPI()
 
-DEVICE = "cuda" if torch.cuda.is_available() else "mps"
+DEVICE = "cuda"
 
 def validate_api_token(api_token: str):
     tokens_str = os.environ.get("POWERIMAGINATOR_API_TOKENS")
@@ -35,8 +35,8 @@ def get_config(api_token: str):
     validate_api_token(api_token)
 
     return {
-        "width": 512,
-        "height": 512,
+        "width": 1024,
+        "height": 1024,
         "fov_y": 75.0 * (math.pi / 180.0),
         "allow_brush_strength": False,
     }
@@ -57,20 +57,17 @@ async def inpaint(
     global inpaint_pipe
 
     if inpaint_pipe is None:
-        inpaint_pipe = diffusers.StableDiffusionInpaintPipeline.from_single_file(
-            "https://huggingface.co/Lykon/AbsoluteReality/blob/main/AbsoluteReality_1.8.1_INPAINTING.inpainting.safetensors",
-            safety_checker=diffusers.pipelines.stable_diffusion.safety_checker.StableDiffusionSafetyChecker.from_pretrained("CompVis/stable-diffusion-safety-checker"),
-            requires_safety_checker=True,
+        inpaint_pipe = diffusers.QwenImageInpaintPipeline.from_pretrained(
+            "Qwen/Qwen-Image",
+            torch_dtype=torch.bfloat16,
+            # safety_checker=diffusers.pipelines.stable_diffusion.safety_checker.StableDiffusionSafetyChecker.from_pretrained("CompVis/stable-diffusion-safety-checker"),
+            # requires_safety_checker=True,
         )
-        inpaint_pipe = inpaint_pipe.to(DEVICE)
-        inpaint_pipe.load_textual_inversion(
-            "Lykon/AbsoluteReality", weight_name="BadDream.pt", token="BadDream"
+        inpaint_pipe.load_lora_weights(
+            "lightx2v/Qwen-Image-Lightning", weight_name="Qwen-Image-Lightning-4steps-V2.0.safetensors"
         )
-        inpaint_pipe.load_textual_inversion(
-            "Lykon/AbsoluteReality",
-            weight_name="UnrealisticDream.pt",
-            token="UnrealisticDream",
-        )
+        inpaint_pipe.enable_sequential_cpu_offload()
+        # inpaint_pipe.enable_xformers_memory_efficient_attention()
 
     init_image = Image.open(init_image_file.file).convert("RGB")
     mask_image = Image.open(mask_image_file.file).convert("RGB")
@@ -84,7 +81,7 @@ async def inpaint(
         generator=generator,
         num_inference_steps=num_inference_steps,
         strength=strength,
-    )[0][0]
+    ).images[0]
 
     buf = io.BytesIO()
     inpainted_image.save(buf, format="PNG")
