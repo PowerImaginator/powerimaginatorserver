@@ -1,6 +1,7 @@
 import modal
 
 image = modal.Image.debian_slim().pip_install(
+    "accelerate>=1.10.1",
     "diffusers>=0.35.1",
     "fastapi[standard]>=0.117.1",
     "hf-transfer>=0.1.9",
