@@ -9,6 +9,23 @@ import torch
 import diffusers
 from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 
+scheduler_config = {
+    "base_image_seq_len": 256,
+    "base_shift": math.log(3),
+    "invert_sigmas": False,
+    "max_image_seq_len": 8192,
+    "max_shift": math.log(3),
+    "num_train_timesteps": 1000,
+    "shift": 1.0,
+    "shift_terminal": None,
+    "stochastic_sampling": False,
+    "time_shift_type": "exponential",
+    "use_beta_sigmas": False,
+    "use_dynamic_shifting": True,
+    "use_exponential_sigmas": False,
+    "use_karras_sigmas": False,
+}
+
 app = FastAPI()
 
 DEVICE = "cuda"
@@ -49,38 +66,56 @@ async def inpaint(
     prompt: str = Form(...),
     negative_prompt: str = Form(""),
     seed: int = Form(0),
-    num_inference_steps: int = Form(30),
-    strength: float = Form(1.0),
 ):
     validate_api_token(api_token)
 
     global inpaint_pipe
 
     if inpaint_pipe is None:
-        inpaint_pipe = diffusers.QwenImageInpaintPipeline.from_pretrained(
-            "Qwen/Qwen-Image",
+        scheduler = diffusers.FlowMatchEulerDiscreteScheduler.from_config(scheduler_config)
+
+        inpaint_pipe = diffusers.QwenImageEditPlusPipeline.from_pretrained(
+            "Qwen/Qwen-Image-Edit-2509",
             torch_dtype=torch.bfloat16,
+            scheduler=scheduler,
             # safety_checker=diffusers.pipelines.stable_diffusion.safety_checker.StableDiffusionSafetyChecker.from_pretrained("CompVis/stable-diffusion-safety-checker"),
             # requires_safety_checker=True,
         )
+        print("Model loaded successfully")
+
         inpaint_pipe.load_lora_weights(
-            "lightx2v/Qwen-Image-Lightning", weight_name="Qwen-Image-Lightning-4steps-V2.0.safetensors"
+            "lightx2v/Qwen-Image-Lightning", weight_name="Qwen-Image-Edit-2509/Qwen-Image-Edit-2509-Lightning-8steps-V1.0-bf16.safetensors"
         )
-        inpaint_pipe.enable_sequential_cpu_offload()
-        # inpaint_pipe.enable_xformers_memory_efficient_attention()
+        print("LoRA weights loaded successfully")
+
+        inpaint_pipe.fuse_lora()
+        print("LoRA fusion applied successfully")
+
+        inpaint_pipe = inpaint_pipe.to(DEVICE)
+        print("Model moved to GPU")
 
     init_image = Image.open(init_image_file.file).convert("RGB")
     mask_image = Image.open(mask_image_file.file).convert("RGB")
 
+    # Convert images to numpy arrays for pixel manipulation
+    init_array = np.array(init_image)
+    mask_array = np.array(mask_image)
+    # Find mask pixels where any R, G, or B component is greater than 0
+    white_mask = (mask_array > 0).any(axis=2)
+    # Set corresponding pixels in init_image to green (RGB: 0, 255, 0)
+    init_array[white_mask] = [0, 255, 0]
+    # Convert back to PIL Image
+    init_image = Image.fromarray(init_array)
+
     generator = torch.Generator(device=DEVICE).manual_seed(seed)
+    
+    # Run inference (same as HF Space - 8 steps!)
     inpainted_image = inpaint_pipe(
+        init_image,
         prompt,
         negative_prompt=negative_prompt,
-        image=init_image,
-        mask_image=mask_image,
         generator=generator,
-        num_inference_steps=num_inference_steps,
-        strength=strength,
+        num_inference_steps=8,  # Same as HF Space
     ).images[0]
 
     buf = io.BytesIO()
