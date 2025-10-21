@@ -1,5 +1,6 @@
 checkpoints/
 models/
+images/
 .DS_Store
 
 # Python-generated files
