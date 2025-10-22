@@ -1,7 +1,7 @@
 import modal
 
 image = (
-    modal.Image.debian_slim()
+    modal.Image.debian_slim(python_version="3.12")
     .apt_install("git")
     .pip_install(
         "fastapi[standard]>=0.117.1",
@@ -17,7 +17,8 @@ image = (
         "pip install git+https://github.com/huggingface/accelerate.git",
         "pip install git+https://github.com/huggingface/peft.git",
         "pip install git+https://github.com/huggingface/diffusers.git", 
-        "pip install git+https://github.com/huggingface/transformers.git"
+        "pip install git+https://github.com/huggingface/transformers.git",
+        "pip install https://github.com/nunchaku-tech/nunchaku/releases/download/v1.0.1/nunchaku-1.0.1+torch2.8-cp312-cp312-linux_x86_64.whl"
     )
     .env({
         "HF_HOME": "/hf-home",

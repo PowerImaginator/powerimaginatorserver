@@ -9,6 +9,12 @@ import torch
 import diffusers
 from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 
+from nunchaku import NunchakuQwenImageTransformer2DModel
+from nunchaku.utils import get_gpu_memory, get_precision
+
+LORA_RANK = 128
+NUM_INFERENCE_STEPS = 4
+
 scheduler_config = {
     "base_image_seq_len": 256,
     "base_shift": math.log(3),
@@ -72,27 +78,34 @@ async def inpaint(
     global inpaint_pipe
 
     if inpaint_pipe is None:
+        # From https://github.com/ModelTC/Qwen-Image-Lightning/blob/342260e8f5468d2f24d084ce04f55e101007118b/generate_with_diffusers.py#L82C9-L97C10
         scheduler = diffusers.FlowMatchEulerDiscreteScheduler.from_config(scheduler_config)
+
+        model_path = f"nunchaku-tech/nunchaku-qwen-image-edit-2509/svdq-{get_precision()}_r{LORA_RANK}-qwen-image-edit-2509-lightningv2.0-{NUM_INFERENCE_STEPS}steps.safetensors"
+
+        # Load the quantized transformer
+        transformer = NunchakuQwenImageTransformer2DModel.from_pretrained(model_path)
 
         inpaint_pipe = diffusers.QwenImageEditPlusPipeline.from_pretrained(
             "Qwen/Qwen-Image-Edit-2509",
-            torch_dtype=torch.bfloat16,
+            transformer=transformer,
             scheduler=scheduler,
+            torch_dtype=torch.bfloat16,
             # safety_checker=diffusers.pipelines.stable_diffusion.safety_checker.StableDiffusionSafetyChecker.from_pretrained("CompVis/stable-diffusion-safety-checker"),
             # requires_safety_checker=True,
         )
         print("Model loaded successfully")
 
-        inpaint_pipe.load_lora_weights(
-            "lightx2v/Qwen-Image-Lightning", weight_name="Qwen-Image-Edit-2509/Qwen-Image-Edit-2509-Lightning-8steps-V1.0-bf16.safetensors"
-        )
-        print("LoRA weights loaded successfully")
-
-        inpaint_pipe.fuse_lora()
-        print("LoRA fusion applied successfully")
-
-        inpaint_pipe = inpaint_pipe.to(DEVICE)
-        print("Model moved to GPU")
+        if get_gpu_memory() > 18:
+            inpaint_pipe.enable_model_cpu_offload()
+        else:
+            # use per-layer offloading for low VRAM. This only requires 3-4GB of VRAM.
+            transformer.set_offload(
+                True, use_pin_memory=False, num_blocks_on_gpu=1
+            )  # increase num_blocks_on_gpu if you have more VRAM
+            inpaint_pipe._exclude_from_cpu_offload.append("transformer")
+            inpaint_pipe.enable_sequential_cpu_offload()
+        print("Model offloading configured")
 
     init_image = Image.open(init_image_file.file).convert("RGB")
     mask_image = Image.open(mask_image_file.file).convert("RGB")
@@ -102,20 +115,20 @@ async def inpaint(
     mask_array = np.array(mask_image)
     # Find mask pixels where any R, G, or B component is greater than 0
     white_mask = (mask_array > 0).any(axis=2)
-    # Set corresponding pixels in init_image to green (RGB: 0, 255, 0)
-    init_array[white_mask] = [0, 255, 0]
+    # Set corresponding pixels in init_image to red (RGB: 255, 0, 0)
+    init_array[white_mask] = [255, 0, 0]
     # Convert back to PIL Image
     init_image = Image.fromarray(init_array)
 
     generator = torch.Generator(device=DEVICE).manual_seed(seed)
-    
-    # Run inference (same as HF Space - 8 steps!)
+
     inpainted_image = inpaint_pipe(
         init_image,
         prompt,
         negative_prompt=negative_prompt,
         generator=generator,
-        num_inference_steps=8,  # Same as HF Space
+        num_inference_steps=NUM_INFERENCE_STEPS,
+        true_cfg_scale=1.0,
     ).images[0]
 
     buf = io.BytesIO()
