@@ -1,3 +1,5 @@
+checkpoints/
+models/
 .DS_Store
 checkpoints
 
